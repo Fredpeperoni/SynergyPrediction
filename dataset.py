@@ -3,9 +3,10 @@ import pandas as pd
 import warnings
 import rdkit.Chem as Chem
 from rdkit.Chem.rdFingerprintGenerator import GetMorganGenerator
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, KernelPCA
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 import gc
+import hashlib
 
 def fp_str_to_array(str_):
     return np.array([int(bit) for bit in list(str_)])
@@ -51,7 +52,7 @@ class SynergyDataset:
         
         self.scaler = None
         self.fpgen = None
-        self.pca = None
+        self.dim_red_algo = None
         
         self.body_zones = None
         self.gene_names = None
@@ -99,30 +100,34 @@ class SynergyDataset:
         self._load_gene_data(self.input_test, 'test')
         self._load_gene_meta_data(self.input_test, 'test')
         
+        gene_names = self.gene_data['train'].columns.tolist()[4:]
+        self.gene_names = gene_names
+
+        genes_train = self.gene_data['train'][gene_names]
+        genes_valid = self.gene_data['valid'][gene_names]
+        genes_test = self.gene_data['test'][gene_names]
+
+        scaler = MinMaxScaler()
+        self.scaler = scaler
+        genes_scaled_train = self.scaler.fit_transform(genes_train)
+        genes_scaled_valid = self.scaler.transform(genes_valid)
+        genes_scaled_test = self.scaler.transform(genes_test)
         if gene_embed == 'pca':
             print('Gene PCA features creation')
-            gene_names = self.gene_data['train'].columns.tolist()[4:]
-            self.gene_names = gene_names
-            
-            genes_train = self.gene_data['train'][gene_names]
-            genes_valid = self.gene_data['valid'][gene_names]
-            genes_test = self.gene_data['test'][gene_names]
-            
-            scaler = MinMaxScaler()
-            self.scaler = scaler
-            genes_scaled_train = self.scaler.fit_transform(genes_train)
-            genes_scaled_valid = self.scaler.transform(genes_valid)
-            genes_scaled_test = self.scaler.transform(genes_test)
-            
             pca = PCA(n_components=params.get('n_components', 10))
-            self.pca = pca
-            gene_features_train = self.pca.fit_transform(genes_scaled_train)
-            gene_features_valid = self.pca.transform(genes_scaled_valid)
-            gene_features_test = self.pca.transform(genes_scaled_test)
-            
+            self.dim_red_algo = pca
+        elif gene_embed == 'kernel_pca':
+            print('Gene kernel PCA features creation')
+            kernel_pca = KernelPCA(n_components=params.get('n_components', 10),
+                                   kernel=params.get('kernel', 'rbf'))
+            self.dim_red_algo = kernel_pca
         else:
             raise ValueError('Unknown gene expression encoding method')
             
+        gene_features_train = self.dim_red_algo.fit_transform(genes_scaled_train)
+        gene_features_valid = self.dim_red_algo.transform(genes_scaled_valid)
+        gene_features_test = self.dim_red_algo.transform(genes_scaled_test)
+                        
         print('Cell body zone information encoding')
         enc = OneHotEncoder(handle_unknown='ignore')
         X = self.gene_meta_data['train'][['body_zone']]
@@ -131,13 +136,13 @@ class SynergyDataset:
         
         df_train = pd.DataFrame()
         df_train = self.mol_embed['train']
-        df_train['pca_features'] = gene_features_train.tolist()
+        df_train['gene_features'] = gene_features_train.tolist()
         df_train['body_zone'] = enc.transform(X).toarray().tolist() 
         self.splits['train'] = df_train
         
         df_valid = pd.DataFrame()
         df_valid = self.mol_embed['valid']
-        df_valid['pca_features'] = gene_features_valid.tolist()
+        df_valid['gene_features'] = gene_features_valid.tolist()
         df_valid['body_zone'] = enc.transform(
             self.gene_meta_data['valid'][['body_zone']]
         ).toarray().tolist()
@@ -145,7 +150,7 @@ class SynergyDataset:
         
         df_test = pd.DataFrame()
         df_test = self.mol_embed['test']
-        df_test['pca_features'] = gene_features_test.tolist()
+        df_test['gene_features'] = gene_features_test.tolist()
         df_test['body_zone'] = enc.transform(
             self.gene_meta_data['test'][['body_zone']]
         ).toarray().tolist()
