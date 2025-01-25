@@ -1,2 +1,2 @@
 # SynergyPrediction
-Using molcular ML to predict synergy scores for drug combination treatments discovery
+Using molecular ML to predict synergy scores between small molecules in cells for drug combination treatments discovery
